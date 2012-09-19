@@ -1,0 +1,293 @@
+.\"
+.\" A compact ptrace tutorial, by Boris Lipin.
+.\"
+.
+.\"
+.\" Custom header and footer mdoc macroses.
+.\"
+.\" Remove `_' from macro name to replace mdoc default with custom ones.
+.\"
+.de _header
+.ev env-dh
+.setup-page-layout
+.if !\n[cR] \
+.sp \n[header-space]u
+.tl 'left'center'right'
+.ie !\n[cR] \
+.sp \n[header-space]u
+.el \
+.sp 1v
+.ev
+.ns
+.
+..
+.de _footer
+.ie \n[cR] \
+.br
+.el \{\
+.ev caption-environment
+.setup-page-layout
+.sp \n[footer-space]u
+.ie o \
+.tl 'odd footer left'odd footer center'odd footer right'
+.el \
+.tl 'even footer left'even footer center'even footer right'
+.bp
+.ev
+.\}
+..
+.ds section-name НАЗВАНИЕ
+.ds section-library БИБЛИОТЕКА
+.ds section-description ОПИСАНИЕ
+.ds section-see-also СМОТРИ
+.ds section-files ФАЙЛЫ
+.ds section-authors АВТОРЫ
+.ds section-examples ПРИМЕРЫ
+.ds section-synopsis СИНТАКСИС
+.
+.Dd Сентябрь 17, 2012
+.Dt "Отладка с помощью ptrace" 7 PS1
+.Os Linux
+.
+.\" Divert mandatory sections to NULL-diversion to suppress output.
+.di @null
+.do Sh НАЗВАНИЕ
+.do Sh ОПИСАНИЕ
+.di
+.rm @null
+.
+.Sh СИНТАКСИС
+.Fd #include <sys/ptrace.h>
+.Ft long
+.Fn ptrace "enum __ptrace_request request" "pid_t pid" "void *addr" "void *data"
+.Sh ВВЕДЕНИЕ
+Часто для того,
+чтобы разобраться почему код работает не так,
+программист прибегает к помощи отладчиков,
+однако,
+то как они устроены и каким образом действуют, известно далеко не всем.
+В этой статье будет дано краткое описание механизма отладки,
+который используется операционной системой Linux и приведён 
+короткий пример его использования.
+.Sh ОСНОВНЫЕ СВЕДЕНИЯ О Fn ptrace
+В OC Linux для отладки используется системный вызов
+.Xr ptrace 2 .
+В секции \*[section-synopsis] приведён синтаксис этого вызова.
+Аргумент
+.Fa request
+определяет тип операции:
+будет ли это попытка начать отладку процесса,
+или это будет запрос данных по какому-либо адресу.
+Все прочие аргументы являются опциональными и зависят от значения
+.Fa request .
+.br
+Начать отладку процесса можно двумя способами:
+.Bl -enum
+.It
+C помощью запроса 
+.Dv PTRACE_TRACEME
+текущий процесс будет отлаживаться его родителем.
+Любой сигнал,
+полученный текущим процессом,
+вызовет его остановку,
+а родительский процесс может быть оповещён об этом сигналом
+.Dv SIGCHLD .
+Затем родитель при помощи системного вызова
+.Xr wait 2
+.Pq или подобного
+узнаёт идентификатор остановленного процесса.
+Cледует заметить,
+что для этого типа запроса все остальные аргументы игнорируются.
+.It
+С помощью запроса
+.Dv PTRACE_ATTACH
+можно подключиться к уже существующему процессу,
+передав в
+.Fa pid
+его идентификатор.
+.El
+.Pp
+При успешном завершении всех типов запросов,
+за исключением
+.Dv PTRACE_PEEK* ,
+.Fn ptrace
+возвращает 0.
+Если запрос завершился с ошибкой,
+.Fn ptrace
+возвращает -1,
+а код ошибки заносится в
+.Va errno .
+.Pp
+Кратко опишем некоторые типы запросов:
+.Bl -tag -compact
+.It Dv PTRACE_GETREGS , PTRACE_SETREGS , PTRACE_GETFPREGS , PTRACE_SETFPREGS
+Получаем или изменяем основные регистры или регистры FPU.
+Указатель на структуру с регистрами передаётся в
+.Fa data.
+Для основных регистров используется структура
+.Vt struct user_regs_struct ,
+для регистров FPU
+.Vt struct user_fpregs_struct .
+Определения структур находятся в
+.In sys/user.h .
+.It Dv PTRACE_PEEKDATA , PTRACE_PEEKTEXT , PTRACE_POKEDATA , PTRACE_POKETEXT
+Получаем или изменяем данные в памяти исследуемого процесса
+по переданному в
+.Fa addr
+адресу.
+При запросе
+.Dv PTRACE_PEEK*
+в случае успеха возвращаются запрошенные данные.
+Так как -1
+.Pq Li 0xffffffff
+также может быть адресом,
+для проверки на ошибку необходимо дополнительно
+проверять значение
+.Va errno .
+.It Dv PTRACE_PEEKUSER , PTRACE_POKEUSER
+Получаем или изменяем данные в структуре,
+хранящей значения регистров и другую информацию
+определённой в
+.In sys/user.
+Если
+.Fa data
+не
+.Dv NULL
+и не
+.Dv SIGSTOP ,
+значение интерпретируется как сигнал,
+который посылается процессу.
+.It Dv PTRACE_SINGLESTEP , PTRACE_SYSCALL
+Продолжает выполнение остановленного процесса,
+как и в случае с 
+.Dv PTRACE_CONT ,
+но указывает,
+что процесс должен остановиться при переходе к следующей инструкции
+.Pq Dv PTRACE_SINGLESTEP
+или при входе/выходе из системного вызова
+.Pq Dv PTRACE_SYSCALL .
+Аргумент
+.Fa data
+будет интерпретирован как и в случае с
+.Dv PTRACE_CONT .
+.It Dv PTRACE_DETACH
+Отменяет эффекты 
+.Dv PTRACE_TRACEME , PTRACE_ATTACH
+для процесса с указанным
+.Fa pid ,
+и продолжает выполнение как в случае с
+.Dv PTRACE_CONT .
+.El
+.Pp
+Важно помнить,
+что все запросы,
+перечисленные выше,
+работают только если отлаживаемый процесс остановлен,
+в чём нужно убедиться с помощью системного вызова
+.Xr wait 2 ,
+иначе
+.Fn ptrace
+вернёт -1 и установит
+.Va errno
+в
+.Er ESRCH .
+Описание остальных запросов,
+не перечисленных выше,
+можно посмотреть в
+.Xr ptrace 2 .
+.Sh ПРИМЕРЫ
+Теперь напишем простой пример использования
+.Fn ptrace .
+Программа ниже будет отслеживать все попытки вызова
+.Xr open 2 ,
+сделанные дочерним процессом.
+В нашем примере роль отлаживаемой программы будет играть
+.Ic /bin/ls .
+Для краткости,
+опущены проверки на ошибки и не учитывается порядок байтов.
+В реальной программе,
+пожалуй,
+так делать не стоит.
+.Bd -literal
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+#include <sys/ptrace.h>
+#include <sys/reg.h>
+#include <sys/syscall.h>
+#include <sys/types.h>
+#include <sys/user.h>
+#include <sys/wait.h>
+
+#include <limits.h>
+
+void
+get_open_args(pid_t pid)
+{
+	struct user_regs_struct regs;
+	unsigned char path[PATH_MAX];
+	int i;
+
+	if (ptrace(PTRACE_GETREGS, pid, NULL, &regs) == -1)
+		printf("ptrace getregs error\\n");
+	i = 0;
+	while (1) {
+		unsigned int tmp;
+		int j;
+
+		tmp = ptrace(PTRACE_PEEKTEXT, pid, regs.ebx + i, NULL);
+		for (j = 0; j < 4; j++) {
+			//tmp var keep 4 symbols(0x04030201), we must get it
+			//one by one
+			path[i] = (tmp << (32 - (j + 1) * 8)) >> 24;
+			if (path[i] == '\\0')
+				goto finalize;
+			i++;
+		}
+	}
+finalize:
+	
+	printf("open (\\\\"%s\\\\", %.8x)\\n", path, (int)regs.ecx);
+}
+
+int
+main()
+{
+	int pid, status;
+	int insyscall;
+	
+        pid = fork();
+
+        switch (pid) {
+        case 0:
+                ptrace(PTRACE_TRACEME, 0, NULL, NULL);
+                execl("/bin/ls", "ls", NULL);
+        case -1: 
+                perror("fork ");
+                exit(1);
+        default:
+                break;
+        }
+
+	insyscall = 0;
+	while (1) {
+		wait(&status);
+		//is child exited
+		if (WIFEXITED(status))
+			break;
+
+		if (insyscall == 1) {
+			insyscall = 0;
+		} else {
+			int eax;
+			eax = ptrace(PTRACE_PEEKUSER, pid, 4 * ORIG_EAX, NULL);
+			if (eax == __NR_open)
+				get_open_args(pid);
+			insyscall = 1;
+		}
+		ptrace(PTRACE_SYSCALL, pid, NULL, NULL);
+	}
+	return 0;
+}
+.Ed
