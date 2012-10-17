@@ -130,7 +130,7 @@ Cледует заметить,
 .Vt struct user_fpregs_struct .
 Определения структур находятся в
 .In sys/user.h .
-.It Dv PTRACE_PEEKDATA , PTRACE_PEEKTEXT , PTRACE_POKEDATA , PTRACE_POKETEXT
+.It Dv PTRACE_PEEK_DATA , PTRACE_PEEK_TEXT , PTRACE_POKE_DATA , PTRACE_POKE_TEXT
 Получаем или изменяем данные в памяти исследуемого процесса
 по переданному в
 .Fa addr
@@ -144,11 +144,8 @@ Cледует заметить,
 для проверки на ошибку необходимо дополнительно
 проверять значение
 .Va errno .
-.It Dv PTRACE_PEEKUSER , PTRACE_POKEUSER
-Получаем или изменяем данные в структуре,
-хранящей значения регистров и другую информацию
-определённой в
-.In sys/user.
+.It Dv PTRACE_CONT
+Продолжает выполнение остановленного процесса.
 Если
 .Fa data
 не
@@ -198,7 +195,7 @@ Cледует заметить,
 .Sh ПРИМЕРЫ
 Теперь напишем простой пример использования
 .Fn ptrace .
-Программа ниже будет отслеживать все попытки вызова
+Программа будет отслеживать все попытки вызова
 .Xr open 2 ,
 сделанные дочерним процессом.
 В нашем примере роль отлаживаемой программы будет играть
@@ -208,86 +205,6 @@ Cледует заметить,
 В реальной программе,
 пожалуй,
 так делать не стоит.
-.Bd -literal
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-
-#include <sys/ptrace.h>
-#include <sys/reg.h>
-#include <sys/syscall.h>
-#include <sys/types.h>
-#include <sys/user.h>
-#include <sys/wait.h>
-
-#include <limits.h>
-
-void
-get_open_args(pid_t pid)
-{
-	struct user_regs_struct regs;
-	unsigned char path[PATH_MAX];
-	int i;
-
-	if (ptrace(PTRACE_GETREGS, pid, NULL, &regs) == -1)
-		printf("ptrace getregs error\\n");
-	i = 0;
-	while (1) {
-		unsigned int tmp;
-		int j;
-
-		tmp = ptrace(PTRACE_PEEKTEXT, pid, regs.ebx + i, NULL);
-		for (j = 0; j < 4; j++) {
-			//tmp var keep 4 symbols(0x04030201), we must get it
-			//one by one
-			path[i] = (tmp << (32 - (j + 1) * 8)) >> 24;
-			if (path[i] == '\\0')
-				goto finalize;
-			i++;
-		}
-	}
-finalize:
-	
-	printf("open (\\\\"%s\\\\", %.8x)\\n", path, (int)regs.ecx);
-}
-
-int
-main()
-{
-	int pid, status;
-	int insyscall;
-	
-        pid = fork();
-
-        switch (pid) {
-        case 0:
-                ptrace(PTRACE_TRACEME, 0, NULL, NULL);
-                execl("/bin/ls", "ls", NULL);
-        case -1: 
-                perror("fork ");
-                exit(1);
-        default:
-                break;
-        }
-
-	insyscall = 0;
-	while (1) {
-		wait(&status);
-		//is child exited
-		if (WIFEXITED(status))
-			break;
-
-		if (insyscall == 1) {
-			insyscall = 0;
-		} else {
-			int eax;
-			eax = ptrace(PTRACE_PEEKUSER, pid, 4 * ORIG_EAX, NULL);
-			if (eax == __NR_open)
-				get_open_args(pid);
-			insyscall = 1;
-		}
-		ptrace(PTRACE_SYSCALL, pid, NULL, NULL);
-	}
-	return 0;
-}
-.Ed
+Две версии файла с примером 
+(одна для x86, другая для x86_64) запакованы в архив вместе с
+данной статьёй.

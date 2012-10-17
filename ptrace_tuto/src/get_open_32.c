@@ -23,16 +23,13 @@ get_open_args(pid_t pid)
 		printf("ptrace getregs error\n");
 	i = 0;
 	while (1) {
-		unsigned int tmp;
+		long tmp;
 		char *cp;
 		int j;
 
-		errno = 0;
 		tmp = ptrace(PTRACE_PEEKTEXT, pid, regs.ebx + i, NULL);
-		if (tmp == -1 && errno != 0)
-			perror("something bad happened:");
 		cp =(char *) &tmp;
-		for (j = 0; j < 4; j++) {
+		for (j = 0; j < sizeof(tmp); j++) {
 			path[i++] = cp[j];
 			if (cp[j] == '\0')
 				goto finalize;
@@ -75,8 +72,8 @@ main()
 		if (insyscall == 1) {
 			insyscall = 0;
 		} else {
-			int eax;
-			eax = ptrace(PTRACE_PEEKUSER, pid, 4 * ORIG_EAX, NULL);
+			long eax;
+			eax = ptrace(PTRACE_PEEKUSER, pid, sizeof(eax) * ORIG_EAX, NULL);
 			if (eax == __NR_open)
 				get_open_args(pid);
 			insyscall = 1;
