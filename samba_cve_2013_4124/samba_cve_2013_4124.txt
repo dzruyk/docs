@@ -1,0 +1,115 @@
+Анализ Samba CVE-2013-4124
+==========================
+
+Описание
+--------
+
+
+Согласно _[1]_ уязвимости подвержены *Samba* версий 3.5.X до 3.5.22, 
+3.6.X до 3.6.17 и 4.x до 4.0.8.
+
+Суть уязвимости - отсутствие проверки переполнения int, что может привести к 
+DOS из-за чрезмерного потребления памяти с помощью отправки специльно сформированного пакета.
+
+Код уязвимой версии:
+
+----
+struct ea_list *read_nttrans_ea_list(TALLOC_CTX *ctx, const char *pdata, size_t data_size)
+{
+	struct ea_list *ea_list_head = NULL;
+	size_t offset = 0;
+
+	if (data_size < 4) {
+		return NULL;
+	}
+
+	while (offset + 4 <= data_size) {
+		size_t next_offset = IVAL(pdata,offset);
+		//allocate new mem for entry
+		struct ea_list *eal = read_ea_list_entry(ctx, pdata + offset + 4, data_size - offset - 4, NULL);
+
+		if (!eal) {
+			return NULL;
+		}
+
+		DLIST_ADD_END(ea_list_head, eal, struct ea_list *);
+		if (next_offset == 0) {
+			break;
+		}
+		offset += next_offset;
+	}
+
+	return ea_list_head;
+}
+----
+
+как видно в цикле из переданных данных извлекается элемент *struct ea_list* и смещение на начало следующего элемента.
+Так как не проверяется размер смещения возможно заставить цикл выполняться вечно.
+
+Для этого необходимо передать данные, имеющие следующую структуру:
+
+item1 {
+	int next_offset		= sizeof(ea_list) + sizeof(int);
+	struct ea_list_entry	= entry1;
+}
+item2 {
+	int next_offset		= UINT_MAX - sizeof(item1) + 1;
+	struct  ea_list_entry	= entry2;
+}
+
+После обработки первого элемента смещение будет равным sizeof(item1);
+Следующее после item2 смещение будет равно 
+
+----
+sizeof(item1) + UINT_MAX - sizeof(item1) + 1 = UINT_MAX + 1 = 0 (из-за переполнения int). 
+----
+
+Т.е. будет вновь обработан первый элемент.
+Т.к. read_ea_list_entry дополнительно выделяет память на создание нового элемента
+вечный цикл заставит самбу скушать всю оперативную память компьютера.
+
+Что бы узнать как эксплуатировать узявимость надо понять в каком сообщении отправлять эти данные
+
+Цепочка вызова уязвимой функции.
+reply_trans2 ->
+    handle_trans2 ->
+        call_trans2setfilepathinfo ->
+           smbd_do_setfilepathinfo ->
+               smb_set_file_full_ea_info ->
+                   read_nttrans_ea_list
+
+По мотивам этого мини исследования написан модуль для Metasploit
+	
+При тестировании уязвимости столкнулся с интересным моментом, а именно: samba 3.5.X ветки кушала RAM гораздо медленнее чем её сестра из 3.6.X.
+Всё дело в том что *DLIST_ADD_END*
+
+----
+./source3/smbd/trans2.c:5707:   ea_list = read_nttrans_ea_list(talloc_tos(),
+						//Reply to a TRANS2_SETFILEINFO (set file info by fileid or pathname).
+													//SMB_FILE_FULL_EA_INFORMATION (verbose level
+
+#from exploit-db exploit alternate call graph
++reply_nttrans	// reply nttrans
+    +->handle_nttrans
+        +-> call_nt_transact_create	// transact!
+            -> read_nttrns_ea_list(vulnerable function)
+
+/* 0x32 */ { "SMBtrans2",reply_trans2, AS_USER | CAN_IPC },
+/* 0x33 */ { "SMBtranss2",reply_transs2, AS_USER | CAN_IPC },
+
+./source3/smbd/trans2.c:7784:   status = smbd_do_setfilepathinfo(conn, req, req,
+./source3/smbd/smb2_setinfo.c:292:              status = smbd_do_setfilepathinfo(conn, smbreq, state,
+
+
+./source3/smbd/nttrans.c:916:struct ea_list *read_nttrans_ea_list(TALLOC_CTX *ctx, const char *pdata, size_t data_size)
+./source3/smbd/nttrans.c:1081:          ea_list = read_nttrans_ea_list(talloc_tos(), data + sd_len,
+./source3/smbd/smb2_create.c:451:                       ea_list = read_nttrans_ea_list(mem_ctx,
+----
+
+
+Ссылки:
+-------
+
+http://ru.wikipedia.org/wiki/Server_Message_Block
+http://cve.mitre.org/cgi-bin/cvename.cgi?name=2013-4124
+http://www.x90c.org/articles/samba_nttrans_reply_integer_overflow.txt

