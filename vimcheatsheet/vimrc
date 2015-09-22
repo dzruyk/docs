@@ -1,0 +1,118 @@
+syntax on
+set nu bg=dark hlsearch ic is ts=8 nocp
+set foldmethod=syntax nofoldenable foldlevel=1
+
+"indent method
+set cindent
+set backspace=2
+
+"russian keys support
+set langmap=йq,цw,уe,кr,еt,нy,гu,шi,щo,зp,фa,ыs,вd,аf,пg,рh,оj,лk,дl,яz,чx,сc,мv,иb,тn,ьm,ЙQ,ЦW,УE,КR,ЕT,НY,ГU,ШI,ЩO,ЗP,ФA,ЫS,ВD,АF,ПG,РH,ОJ,ЛK,ДL,ЯZ,ЧX,СC,МV,ИB,ТN,ЬM,х[,Х{,ъ],ж\\;,Ж:,э',Э\\",б\\,,Б<,ю.,Ю>,Ё~
+
+filetype plugin on
+
+"==========================================
+set tags+=~/.vim/tags/gtk+.vim
+set tags+=~/.vim/tags/glib.vim
+set tags+=~/.vim/tags/cairo.vim
+set tags+=~/.vim/tags/pango.vim
+"=========================================
+"func by Kim Shulz
+"omnicpp complete stuff
+ function! SuperCleverTab()
+     if strpart(getline('.'), 0, col('.') - 1) =~ '^\s*$'
+ 	    return "\<Tab>"
+     else
+	if &omnifunc != ''
+		return "\<C-X>\<C-O>"
+	elseif &dictionary != ''
+		return "\<C-K>"
+   	else
+		return "\<C-N>"
+	endif
+     endif
+endfunction
+
+function! ChangeBg()
+	if &background == "dark"
+:		set bg=light
+	else
+:		set bg=dark
+	endif
+endfunction
+
+function! ToggleNum()
+	if &number
+		set nonumber
+	else
+		set number
+	endif
+endfunction
+
+function! CopyAll()
+	let ln = line('.')
+	normal gg"+yG
+	exec ln
+endfunction
+
+let g:isHlSpace = 0
+
+function! HlSpace()
+	if g:isHlSpace == 0
+		let g:isHlSpace = 1
+		hi BogusWhitespace ctermbg=darkgreen guibg=darkgreen
+		match BogusWhitespace /\s\+$\|^\t\+ \+\|^ \+\t*/
+	else
+		let g:isHlSpace = 0
+		match
+	endif
+endfunction
+
+"inoremap <Tab> <C-R>=SuperCleverTab()<cr>
+inoremap <F2> <C-X><C-O>
+
+"automatically open and close the popup menu / preview window
+au CursorMovedI,InsertLeave * if pumvisible() == 0|silent! pclose|endif
+
+inoremap <C-V> <esc>"+gP
+inoremap <C-S> <ESC>:w
+"map <S-l> :bn<cr>
+"map <S-h> :bp<cr>
+map <S-x> :ls<cr>
+imap <S-TAB> <C-X><C-O>
+
+map <F5> <ESC>:!ctags -R --fields=+iaS --extra=+q ./<cr>:set tags+=tags<cr>
+map <S-F12> :call ChangeBg()<cr>
+map <S-F11> :call ToggleNum()<cr>
+map <S-F10> :call HlSpace()<cr>
+
+"windows like keys
+vmap <C-c> "+y
+map <C-v> <ESC>"+gP
+map <C-A> <ESC>:call CopyAll()<cr>
+map <S-C-RIGHT> <ESC>:tabn<cr>
+map <S-C-LEFT> <ESC>:tabp<cr>
+
+" <Ctrl-l> redraws the screen and removes any search highlighting.
+nnoremap <silent> <C-l> :nohl<CR><C-l>
+
+"set some var
+"let OmniCpp_SelectFirstItem = 1
+let OmniCpp_LocalSearchDecl = 1
+let OmniCpp_NamespaceSearch = 2
+"set fileencodings=cp1251,utf8,koi8-r
+"
+"language specific options
+au FileType python setlocal tabstop=8 expandtab shiftwidth=4 softtabstop=4 foldmethod=indent
+au FileType ruby setlocal tabstop=2 expandtab shiftwidth=2 softtabstop=2 foldmethod=indent
+au FileType asm setlocal tabstop=4 expandtab shiftwidth=4 softtabstop=4 foldmethod=indent
+au BufNewFile,BufRead *.as set ft=javascript
+
+if has("gui_running")
+	colorscheme solarized
+	set bg=dark
+else
+	colorscheme default
+	set bg=dark
+endif
+
